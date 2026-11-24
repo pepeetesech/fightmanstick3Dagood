@@ -1,0 +1,78 @@
+name: Compilar FightManStick 3D APK (Debug)
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 1. Descargar repositorio
+        uses: actions/checkout@v4
+
+      - name: 2. Preparar archivos (ZIP o carpetas)
+        run: |
+          if ls FightManStick3D*.zip 1> /dev/null 2>&1; then
+            unzip -o FightManStick3D*.zip
+          fi
+          mkdir -p www assets
+          for f in index.html manifest.json icon-512.png; do
+            if [ -f "$f" ] && [ ! -f "www/$f" ]; then cp -f "$f" "www/$f"; fi
+          done
+          for f in icon.png icon-only.png icon-foreground.png icon-background.png splash.png splash-dark.png; do
+            if [ -f "$f" ] && [ ! -f "assets/$f" ]; then cp -f "$f" "assets/$f"; fi
+          done
+          if [ ! -f assets/icon-only.png ] && [ -f assets/icon-foreground.png ]; then cp -f assets/icon-foreground.png assets/icon-only.png; fi
+          if [ ! -f assets/icon.png ] && [ -f assets/icon-only.png ]; then cp -f assets/icon-only.png assets/icon.png; fi
+          if [ ! -f assets/splash.png ] && [ -f assets/splash-dark.png ]; then cp -f assets/splash-dark.png assets/splash.png; fi
+          test -s www/index.html
+
+      - name: 3. Configurar Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: 4. Configurar Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: 5. Instalar Capacitor y generar Android
+        run: |
+          npm install --no-audit --no-fund
+          npx cap add android
+          npx @capacitor/assets generate --android
+          npx cap sync android
+
+      - name: 6. Forzar orientación horizontal (sensorLandscape)
+        run: |
+          python3 - << 'PY'
+          import re, sys
+          p = "android/app/src/main/AndroidManifest.xml"
+          xml = open(p, encoding="utf-8").read()
+          m = re.search(r'(<activity\b[^>]*android:name="[^"]*MainActivity"[^>]*)(>)', xml, re.DOTALL)
+          if not m:
+              sys.exit(1)
+          head, end = m.group(1), m.group(2)
+          if 'android:screenOrientation=' in head:
+              head = re.sub(r'android:screenOrientation="[^"]*"', 'android:screenOrientation="sensorLandscape"', head)
+          else:
+              head += ' android:screenOrientation="sensorLandscape"'
+          open(p, "w", encoding="utf-8").write(xml[:m.start()] + head + end + xml[m.end():])
+          PY
+
+      - name: 7. Compilar APK Debug
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
+
+      - name: 8. Subir APK descargable
+        uses: actions/upload-artifact@v4
+        with:
+          name: FightManStick3D-Pro-Debug-APK
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          
